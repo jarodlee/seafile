@@ -9,12 +9,20 @@
 # Uncomment this to turn on verbose mode.
 #export DH_VERBOSE=1
 
-# SEARPC_SOURCE_DIR and CCNET_SOURCE_DIR is set by build-deb.py
-searpc_dir := $(LIBSEARPC_SOURCE_DIR)
-ccnet_dir := $(CCNET_SOURCE_DIR)
-destdir := $(CURDIR)/debian/seafile
+searpc_dir := $(CURDIR)/libsearpc
+ccnet_dir := $(CURDIR)/ccnet
+destdir := $(CURDIR)/debian/seafile-client
 install_prefix := $(destdir)/usr
+seafile_pkg_config := $(install_prefix)/lib/pkgconfig
+seafile_path := $(install_prefix)/bin
 
+old_pkg_config_path := $(PKG_CONFIG_PATH)
+old_path := $(PATH)
+
+export PKG_CONFIG_PATH=$(seafile_pkg_config):$(old_pkg_config_path)
+export PATH=$(seafile_path):$(old_path)
+
+# Enable libappindicator if compile for ubuntu
 ENABLE_APPINDICATOR := $(shell if lsb_release -a 2>/dev/null | grep -i ubuntu 2>/dev/null 1>&2; then \
 	echo '--enable-appindicator'; \
 else \
@@ -26,32 +34,40 @@ build-arch:
 	dh_testdir
 	mkdir -p $(install_prefix)
 
-# build and install libsearpc so it can be used by ccnet and seafile
+# Build libsearpc
 	cd $(searpc_dir) \
-	&& ./configure --prefix=/usr --disable-compile-demo $(shell dpkg-buildflags --export=configure) \
+	&& ./configure --prefix=/usr --disable-shared --disable-compile-demo $(shell dpkg-buildflags --export=configure) \
 	&& make \
 	&& make install DESTDIR=$(destdir)
 
 # Fix the problem of DESTDIR and libtool
 	sed -i -e "s;/usr/lib/libsearpc-json-glib;$(destdir)/usr/lib/libsearpc-json-glib;g" $(install_prefix)/lib/libsearpc.la
 
-# build and install ccnet so it can be used by seafile
+# Build ccnet
 	cd $(ccnet_dir) \
-	&& ./configure --prefix=/usr --disable-compile-demo $(shell dpkg-buildflags --export=configure) \
+	&& ./configure --prefix=/usr --disable-shared --disable-compile-demo $(shell dpkg-buildflags --export=configure) \
 	&& make \
 	&& make install DESTDIR=$(destdir)
 
-	./configure --prefix=/usr $(ENABLE_APPINDICATOR) $(shell dpkg-buildflags --export=configure) \
+	sed -i -e "s;/usr/lib/libsearpc;$(destdir)/usr/lib/libsearpc;g" $(install_prefix)/lib/libccnet.la
+
+	./configure --prefix=/usr --disable-shared $(ENABLE_APPINDICATOR) $(shell dpkg-buildflags --export=configure) \
 	&& make \
 	&& make install DESTDIR=$(destdir)
 
-# remove development files
+# remove development files and unused files
 	rm -rf $(install_prefix)/include
 	rm -rf $(install_prefix)/lib/pkgconfig
 	rm -rf $(install_prefix)/lib/*.a
 	rm -rf $(install_prefix)/lib/*.la
 	rm -f $(install_prefix)/bin/searpc-codegen.py
 	rm -f $(install_prefix)/bin/ccnet-tool
+	rm -f $(install_prefix)/bin/ccnet-init
+	rm -f $(install_prefix)/bin/ccnet-servtool
+	rm -f $(install_prefix)/bin/seafile
+
+# remove .pyc/pyo files installed by py-compile of autoconf
+	find $(install_prefix) -name \*.pyo -o -name \*.pyc | xargs rm -f
 
 binary-indep:
 binary-arch:
@@ -75,8 +91,6 @@ binary-arch:
 	dh_strip
 	dh_compress
 	dh_fixperms
-#	dh_perl
-	dh_makeshlibs
 	dh_installdeb
 	dh_shlibdeps
 	dh_gencontrol
@@ -86,6 +100,9 @@ binary-arch:
 build: build-indep build-arch
 binary: binary-indep binary-arch
 clean:
+	cd $(searpc_dir) && ([ ! -f Makefile ] || make distclean)
+	cd $(ccnet_dir) && ([ ! -f Makefile ] || make distclean)
+	[ ! -f Makefile ] || make distclean
 	dh_clean
 
 .PHONY: clean build build-indep build-arch binary binary-indep binary-arch
